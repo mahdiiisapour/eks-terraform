@@ -1,2 +1,2 @@
 # eks-terraform
-Setup EKS cluster and Nodegroup and Add-ons using Terraform
+Setup EKS cluster, Nodegroups and Add-ons using Terraform
