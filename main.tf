@@ -39,8 +39,6 @@ module "vpc" {
   }
 }
 
-
-
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.0"
@@ -50,10 +48,10 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets
 
-  cluster_endpoint_public_access  = true  
+  cluster_endpoint_public_access  = true
   cluster_endpoint_private_access = false
 
-  enable_irsa = true  
+  enable_irsa = true
 
   eks_managed_node_groups = {
     workers = {
@@ -68,8 +66,6 @@ module "eks" {
     }
   }
 }
-
-
 
 resource "aws_iam_role" "eks_admin_role" {
   name = "EKSAdminRole"
@@ -101,7 +97,8 @@ resource "aws_iam_policy" "eks_admin_policy" {
           "eks:ListClusters",
           "eks:DescribeCluster",
           "eks:GetToken",
-          "eks:AccessKubernetesApi"
+          "eks:AccessKubernetesApi",
+          "eks:AssociateAccessPolicy"
         ]
         Resource = "*"
       }
@@ -114,6 +111,12 @@ resource "aws_iam_role_policy_attachment" "eks_admin_role_attachment" {
   policy_arn = aws_iam_policy.eks_admin_policy.arn
 }
 
+
+
+# aws eks associate-access-policy \
+#   --cluster-name my-eks-cluster \
+#   --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy \
+#   --principal-arn arn:aws:iam::509399624501:user/terraform-admin
 
 
 resource "aws_iam_role" "eks_irsa_role" {
@@ -138,45 +141,11 @@ resource "aws_iam_role" "eks_irsa_role" {
   })
 }
 
-resource "aws_iam_policy_attachment" "eks_irsa_policy_attachment" {
-  name       = "eks-irsa-policy-attachment"
-  roles      = [aws_iam_role.eks_irsa_role.name]
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-}
-
-
-
-resource "kubernetes_cluster_role" "eks_admin_role" {
-  metadata {
-    name = "eks-admin-role"
-  }
-
-  rule {
-    api_groups = [""]
-    resources  = ["*"]
-    verbs      = ["*"]
-  }
-}
-
-resource "kubernetes_cluster_role_binding" "eks_admin_binding" {
-  metadata {
-    name = "eks-admin-role-binding"
-  }
-
-  subject {
-    kind      = "User"
-    name      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/EKSAdminRole"
-    api_group = "rbac.authorization.k8s.io"
-  }
-
-  role_ref {
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.eks_admin_role.metadata[0].name
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
-
-
+# resource "aws_iam_policy_attachment" "eks_irsa_policy_attachment" {
+#   name       = "eks-irsa-policy-attachment"
+#   roles      = [aws_iam_role.eks_irsa_role.name]
+#   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+# }
 
 
 resource "aws_eks_addon" "vpc_cni" {
@@ -211,10 +180,6 @@ resource "aws_eks_addon" "kube_proxy" {
     ManagedBy   = "Terraform"
   }
 }
-
-
-data "aws_caller_identity" "current" {}
-
 
 
 output "eks_admin_role_arn" {
