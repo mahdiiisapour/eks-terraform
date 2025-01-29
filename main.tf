@@ -1,10 +1,23 @@
+
 provider "aws" {
   region = var.region
 }
 
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.eks.token
+}
+
+data "aws_eks_cluster_auth" "eks" {
+  name = module.eks.cluster_name
+}
+
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.17.0"
+
   name               = "${var.cluster_name}-vpc"
   cidr               = var.vpc_cidr
   azs                = var.availability_zones
@@ -15,25 +28,23 @@ module "vpc" {
 
   map_public_ip_on_launch = true
 
-
   public_subnet_tags = {
-    "kubernetes.io/role/elb"                = "1"                         
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"                
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb"       = "1"                         
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"               
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 }
 
 
-
-
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "20.33.0"
+  version = "~> 20.0"
 
+  # Basic cluster settings
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
   vpc_id          = module.vpc.vpc_id
@@ -42,6 +53,7 @@ module "eks" {
   cluster_endpoint_public_access  = true
   cluster_endpoint_private_access = false
 
+  # EKS managed node group
   eks_managed_node_groups = {
     workers = {
       desired_capacity = var.node_desired_capacity
@@ -50,26 +62,41 @@ module "eks" {
       instance_type    = var.node_instance_type
 
       tags = {
-        "Name" = "${var.cluster_name}-workers"
+        Name = "${var.cluster_name}-workers"
       }
-
-
-      iam_role_name = module.iam.eks_node_group_role_name
     }
   }
 }
 
 
+resource "aws_iam_role" "eks_admin_role" {
+  name = "eks-admin-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::509399624501:user/eks-admin" # Replace with your IAM user ARN
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy_attachment" "eks_admin_policy_attachment" {
+  name       = "eks-admin-policy-attachment"
+  roles      = [aws_iam_role.eks_admin_role.name]
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
 
 
-
-# Add-ons
 resource "aws_eks_addon" "vpc_cni" {
-  cluster_name                = module.eks.cluster_name
-  addon_name                  = "vpc-cni"
-  depends_on = [module.eks]
-  # resolve_conflicts_on_create = "OVERWRITE"
-  # resolve_conflicts_on_update = "OVERWRITE"
+  cluster_name = module.eks.cluster_name
+  addon_name   = "vpc-cni"
+  depends_on   = [module.eks]
 
   tags = {
     Environment = var.environment
@@ -80,23 +107,18 @@ resource "aws_eks_addon" "vpc_cni" {
 resource "aws_eks_addon" "coredns" {
   cluster_name = module.eks.cluster_name
   addon_name   = "coredns"
-
-  depends_on = [module.eks]
+  depends_on   = [module.eks]
 
   tags = {
     Environment = var.environment
     ManagedBy   = "Terraform"
   }
 }
-
-
 
 resource "aws_eks_addon" "kube_proxy" {
-  cluster_name                = module.eks.cluster_name
-  addon_name                  = "kube-proxy"
-  depends_on = [module.eks]
-  # resolve_conflicts_on_create = "OVERWRITE"
-  # resolve_conflicts_on_update = "OVERWRITE"
+  cluster_name = module.eks.cluster_name
+  addon_name   = "kube-proxy"
+  depends_on   = [module.eks]
 
   tags = {
     Environment = var.environment
@@ -104,18 +126,4 @@ resource "aws_eks_addon" "kube_proxy" {
   }
 }
 
-# resource "aws_eks_addon" "aws_lb_controller" {
-#   cluster_name                = module.eks.cluster_name
-#   addon_name                  = "aws-load-balancer-controller"
-  # depends_on = [module.eks]
-#   # resolve_conflicts_on_create = "OVERWRITE"
-#   # resolve_conflicts_on_update = "OVERWRITE"
-
-#   tags = {
-#     Environment = var.environment
-#     ManagedBy   = "Terraform"
-#   }
-# }
-
-# Data Source for Availability Zones
-# data "aws_availability_zones" "available" {}
+data "aws_caller_identity" "current" {}
